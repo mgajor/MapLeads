@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="1" x2="1" y2="0"><stop stop-color="#07152e"/><stop offset=".6" stop-color="#103863"/><stop offset="1" stop-color="#087e94"/></linearGradient>
+    <linearGradient id="pin" x1=".2" y1="0" x2=".8" y2="1"><stop stop-color="#b8ffe5"/><stop offset=".5" stop-color="#43ebc2"/><stop offset="1" stop-color="#08a6b2"/></linearGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#70deed" stop-opacity=".5"/><stop offset="1" stop-color="#3274ac" stop-opacity=".12"/></linearGradient>
+    <filter id="shadow" x="-30%" y="-20%" width="160%" height="160%"><feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000c23" flood-opacity=".5"/></filter>
+  </defs>
+  <rect x="64" y="72" width="896" height="896" rx="202" fill="#041125" opacity=".18"/>
+  <rect x="64" y="56" width="896" height="896" rx="202" fill="url(#tile)"/>
+  <rect x="66" y="58" width="892" height="892" rx="200" fill="none" stroke="url(#edge)" stroke-width="4"/>
+  <path d="M512 170C361 170 242 286 242 434c0 169 163 330 253 424 10 11 24 11 34 0 90-94 253-255 253-424 0-148-119-264-270-264zm0 76a190 190 0 1 1 0 380 190 190 0 0 1 0-380z" fill="url(#pin)" fill-rule="evenodd" filter="url(#shadow)"/>
+  <g fill="#fff8e5">
+    <path d="M394 342h64l-10 74c-4 40-77 43-79 0zM477 342h70l12 74c0 43-94 43-94 0zM566 342h64l25 74c-2 43-75 40-79 0z"/>
+    <path d="M393 463c24 8 44 4 64-10 33 18 77 18 110 0 20 14 40 18 64 10v84c0 19-12 30-30 30h-53v-52c0-21-13-34-36-34s-36 13-36 34v52h-53c-18 0-30-11-30-30z"/>
+  </g>
+</svg>

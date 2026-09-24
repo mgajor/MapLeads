@@ -46,6 +46,10 @@ xcode-select --install
 
 You can move `dist/MapLeads.app` to `/Applications`. The built app does not need Xcode, Node.js, or Python to run.
 
+This is a standard native `.app` bundle. Once copied into Applications, launch it from Finder or Spotlight. To pin it, right-click its Dock icon and choose **Options → Keep in Dock**. Use **⌘Q** to quit; closing a window is separate from quitting on macOS. The app and saved library persist after quitting. Install in `/Applications` or your user's `~/Applications`, not `/System`.
+
+The icon's editable vector master is `Assets/MapLeads.svg`; `Assets/MapLeads.icns` contains the standard macOS icon resolutions and is copied into the bundle during the build. The design uses a mint map pin and cream storefront on a rounded navy/teal tile.
+
 The app is **locally ad-hoc signed**, not Developer ID signed or notarized for distribution. Build output in `dist/` and Swift build artifacts in `.build/` are excluded from Git.
 
 ## First search

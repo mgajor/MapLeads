@@ -5,6 +5,7 @@
 <key>CFBundleIdentifier</key><string>local.MapLeads</string>
 <key>CFBundleName</key><string>MapLeads</string>
 <key>CFBundleDisplayName</key><string>MapLeads</string>
+<key>CFBundleIconFile</key><string>MapLeads</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>1.0</string>
 <key>CFBundleVersion</key><string>1</string>
