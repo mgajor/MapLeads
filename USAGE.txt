@@ -1,0 +1,77 @@
+MapLeads — native macOS lead workspace
+
+OPEN
+Double-click dist/MapLeads.app, or run:
+  open dist/MapLeads.app
+You may move the app to /Applications. No browser server, Node, Python, or
+Xcode is required to run the built app. Requires macOS 14 or newer.
+The supplied build is locally ad-hoc signed, not notarized for distribution.
+
+BUILD
+  bash build-app.sh
+Requires Apple's Swift command-line tools. No third-party package dependencies.
+
+FIRST SEARCH
+1. Open Apify settings and save your API token to macOS Keychain.
+2. Choose Find leads. Enter a niche and city/state/country.
+3. Select radius, result limit, detail level, and USD run spending cap.
+4. Review the actor pricing link and authorize the paid run.
+5. Start search. Leads are saved when the run reaches a terminal state.
+Apify performs the scrape in the cloud. The app sends maxTotalChargeUsd to
+Apify; billing and enforcement are handled by Apify. Current pricing includes
+actor events and platform usage. No searches run automatically.
+
+INTERRUPTED RUNS
+The run ID is retained in app preferences. Resume / collect retrieves its
+status and results without starting another paid run. Abort cloud run sends
+an abort request; charges already incurred remain. Closing the app does not
+stop a cloud run. If a start request fails before an ID arrives, inspect Apify
+Console before retrying: the server may already have started it.
+
+QUALIFICATION
+Call candidates: website explicitly absent from the listing, phone and address
+present, operational status, no moved/closure/consumer-alert flags or outreach
+opt-out. This is a candidate queue, not proof a business is alive or site-less.
+Needs verification: insufficient evidence (including missing website field,
+unknown business status, or missing address).
+Excluded: website present, no phone, closed/moved/consumer alert, or marked
+Not interested / Do not contact. Records remain available under All leads.
+Closed right now (hoursStatus) is not permanent or temporary closure.
+The detail panel explains score contributions. Unknown values are not false.
+Sampled photos and reviews are not treated as total activity counts.
+
+OUTREACH
+Choose a lead, edit stage/notes/follow-up/meeting, then Save outreach BEFORE
+selecting another lead. Follow-ups shows scheduled follow-ups, not calendar
+notifications. Imports and refreshes preserve saved outreach for the same ID.
+Export brief includes the current detail editor's notes and scheduling fields.
+Website previews are not generated or deployed by this app.
+
+IMPORT / EXPORT
+Import JSON accepts an Apify dataset JSON array, not CSV or a run envelope.
+Malformed records produce an error; no partial import is silently accepted.
+CSV exports the currently filtered list and neutralizes formula-like fields.
+Export brief produces a plain-text input for your existing website templates.
+
+LOCAL DATA
+Library: ~/Library/Application Support/MapLeads/leads.json
+Token: macOS Keychain, service local.MapLeads, account apify
+Pending run: macOS app preferences
+Back up leads.json with your normal local backups. The library is not encrypted
+by this app; macOS permissions and FileVault provide system-level protection.
+If the library is unreadable, the app refuses to overwrite it. Restore a backup
+and relaunch. Removing a damaged library loses its records; preserve a copy.
+
+VERIFICATION / LIMITATIONS
+Release build and native visible-window launch verified locally. Throwaway
+scenarios passed qualification, deduplication, persisted outreach, CSV safety,
+and malformed-input handling. A real unauthenticated API call produced the
+expected 401 handling; no paid run was made. Successful paid-run completion,
+Keychain save/read with your credential, and full UI click-through remain to
+be exercised with your account. Accessibility automation was disabled and
+screenshot inspection was unavailable in the development tool environment.
+
+SOURCES
+https://apify.com/kaix/google-maps-places-scraper
+https://docs.apify.com/api/v2/actors-runs-post
+https://docs.apify.com/api/v2/dataset-items-get
