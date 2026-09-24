@@ -12,7 +12,7 @@ BUILD
 Requires Apple's Swift command-line tools. No third-party package dependencies.
 
 FIRST SEARCH
-1. Open Apify settings and save your API token to macOS Keychain.
+1. Open Settings → Apify and save your API token to macOS Keychain.
 2. Choose Find leads. Enter a niche and city/state/country.
 3. Select radius, result limit, detail level, and USD run spending cap.
 4. Review the actor pricing link and authorize the paid run.
@@ -29,16 +29,15 @@ stop a cloud run. If a start request fails before an ID arrives, inspect Apify
 Console before retrying: the server may already have started it.
 
 QUALIFICATION
-Call candidates: website explicitly absent from the listing, phone and address
-present, operational status, no moved/closure/consumer-alert flags or outreach
-opt-out. This is a candidate queue, not proof a business is alive or site-less.
-Needs verification: insufficient evidence (including missing website field,
-unknown business status, or missing address).
-Excluded: website present, no phone, closed/moved/consumer alert, or marked
-Not interested / Do not contact. Records remain available under All leads.
-Closed right now (hoursStatus) is not permanent or temporary closure.
-The detail panel explains score contributions. Unknown values are not false.
-Sampled photos and reviews are not treated as total activity counts.
+Website opportunities: reachable operational businesses with no listed or
+discovered site; enabled enrichment gates must pass.
+Existing-site opportunities: businesses with websites, for service discovery.
+Inactive / stale leads: newest-review evidence older than the configured
+cutoff (24 months by default), when DataForSEO qualification is enabled.
+Needs verification: missing, ambiguous, pending, expired, or failed evidence.
+Excluded: no phone, closed/moved/consumer alert, or Not interested/Do not contact.
+Original Maps-only qualification remains in CSV for provenance.
+Old reviews do not establish closure. No website found does not prove absence.
 
 OUTREACH
 Choose a lead, edit stage/notes/follow-up/meeting, then Save outreach BEFORE
@@ -61,6 +60,28 @@ Back up leads.json with your normal local backups. The library is not encrypted
 by this app; macOS permissions and FileVault provide system-level protection.
 If the library is unreadable, the app refuses to overwrite it. Restore a backup
 and relaunch. Removing a damaged library loses its records; preserve a copy.
+
+OPTIONAL ENRICHMENT (1.1)
+Settings contains Enrichment, Apify, Firecrawl, DataForSEO, and AI analysis.
+All enrichment is off by default. Enable desired providers, save credentials,
+then choose Enrich this lead or Enrich filtered list and approve the batch.
+No automatic enrichment runs after import/search. Disabled services get no
+requests; their past results are retained but their category gates are off.
+DataForSEO needs API login/password, not the normal account password.
+AI needs a compatible Chat Completions base URL, key, and model ID; Refresh
+models fetches the advertised list, or enter an ID manually. Model discovery
+is not a guarantee of access. AI needs fresh matched Firecrawl page content.
+Review checks run first; stale leads skip website and AI work. Checks are
+cached 30 days by default. Force refresh incurs additional provider charges.
+Apify's spending cap does NOT cover enrichment; there is no shared dollar cap.
+Stop finishes the current request; pending review tasks are saved and resume
+on the next enrichment pass without resubmission. Provider task failures stay
+visible rather than silently purchasing new tasks.
+Evidence, dates, pending tasks, and AI suggestions live in enrichment.json
+alongside leads.json. Back up both files. Enrichment keys use Keychain service
+local.MapLeads.enrichment. Business facts and page text go to enabled providers.
+AI suggestions are hypotheses and discovery questions, never guaranteed needs.
+See README.md for complete provider behavior and verification limits.
 
 VERIFICATION / LIMITATIONS
 Release build and native visible-window launch verified locally. Throwaway

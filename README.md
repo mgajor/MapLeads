@@ -13,11 +13,12 @@ MapLeads uses the [Google Maps Places Scraper by kaix on Apify](https://apify.co
 - Resume an interrupted cloud run or request an abort.
 - Save results locally and deduplicate them by Place ID, with a deterministic fallback when unavailable.
 - Preserve saved outreach notes, stages, meeting dates, and follow-ups when refreshing listings.
-- Separate leads into **Call candidates**, **Needs verification**, and **Excluded**, with evidence and score explanations.
+- Separate leads into website opportunities, existing-site opportunities, inactive/stale leads, needs verification, and excluded queues.
 - Filter by website status, phone availability, operating status, and outreach stage.
 - Track contacted, interested, meeting booked, won, not interested, and do-not-contact stages.
 - Import Apify dataset JSON; export filtered CSV lists and plain-text business briefs for your existing website templates.
 - Store your API token in macOS Keychain.
+- Optional Firecrawl website discovery, DataForSEO newest-review checks, and OpenAI-compatible AI opportunity analysis with model discovery.
 
 No local web server, third-party Swift packages, or browser-based app shell.
 
@@ -54,8 +55,8 @@ The app is **locally ad-hoc signed**, not Developer ID signed or notarized for d
 
 ## First search
 
-1. Open **Apify settings**.
-2. Paste your [Apify API token](https://console.apify.com/settings/integrations) and choose **Save token**.
+1. Open **Settings → Apify**.
+2. Paste your [Apify API token](https://console.apify.com/settings/integrations) and choose **Save Apify token**.
 3. Select **Find leads** and enter a niche plus a city/state/country.
 4. Choose a radius, maximum result count, detail level, and USD spending cap.
 5. Review the actor's current pricing, authorize the paid run, and start the search.
@@ -83,9 +84,11 @@ The app retains the pending run ID in macOS preferences. **Resume / collect** ch
 
 | Queue | Meaning |
 | --- | --- |
-| **Call candidates** | Website explicitly absent from the listing; phone and address present; operational business status; no closure, move, consumer-alert, or outreach opt-out exclusion. |
-| **Needs verification** | Insufficient evidence, such as an omitted website field, unknown operating status, or missing address. |
-| **Excluded** | Website present, no phone, closed/moved listing, consumer alert, or a saved not-interested/do-not-contact stage. Records remain in **All leads**. |
+| **Website opportunities** | Reachable operational listings without a listed/discovered site; enabled review and website checks must pass. With enrichment disabled, this is based on Maps data only. |
+| **Existing-site opportunities** | Reachable operational businesses with listed or strongly matched websites, eligible for service discovery rather than a new-site pitch. |
+| **Inactive / stale leads** | When review qualification is enabled, the newest retrieved review is older than the configured cutoff (24 months by default). Not a confirmed closure. |
+| **Needs verification** | Missing/ambiguous evidence, zero reviews, unknown dates, pending/failed checks, or expired qualification evidence. |
+| **Excluded** | No phone, closed/moved listing, consumer alert, or saved not-interested/do-not-contact stage. Records remain in All leads. |
 
 Important distinctions:
 
@@ -94,6 +97,22 @@ Important distinctions:
 - **Unknown is not false.** Missing claimed status does not mean unclaimed; missing media does not mean zero photos.
 - **Scores rank evidence, not commercial certainty.** Hard exclusions cannot be outweighed by positive score contributions.
 - A missing address is not automatically disqualifying for a service-area business; it requires verification.
+
+## Optional enrichment (1.1)
+
+Open **Settings** for the Enrichment, Apify, Firecrawl, DataForSEO, and AI analysis sections. All enrichment providers are **off by default**. Enabling one does not start requests; choose **Enrich this lead** or **Enrich filtered list**, inspect the confirmation, and authorize the batch.
+
+- **Firecrawl:** save your API key and enable website discovery. Searches use business identity and inspect page content; name-only matches require verification. Existing listed sites are scraped directly. A successful search with no match means *no website found in that search*, not proof of absence.
+- **DataForSEO:** save the **API login and API password**, enable review qualification, and select the stale cutoff. Requests use saved Place ID/CID plus location, newest-first sorting, and depth 10. Missing identity/location produces an actionable error rather than an ambiguous name search. Pending task IDs persist; another enrichment pass resumes collection without resubmitting. Missing or unreadable dates do not imply inactivity.
+- **AI analysis:** enter an OpenAI-compatible API base URL (including its version prefix), save the key, then **Refresh models** or manually enter a model ID. Only Chat Completions-compatible models are supported. Model-list failures retain the current selection; the app never switches models automatically. Fresh content from a matched Firecrawl website is required; cached pages can be used while Firecrawl requests are disabled.
+
+Order: **review recency → website discovery → optional AI analysis**. Stale leads skip downstream services. Each provider can be disabled independently; its saved results remain visible, but its requests and qualification gate are disabled. Successful checks are reused for 30 days by default (configurable); force refresh can incur additional charges. AI results also refresh when the selected model/base URL changes. Website identity changes invalidate website/AI caches.
+
+**Costs:** enrichment has no shared dollar cap. Apify's run cap does not apply to Firecrawl, DataForSEO, or your AI provider. Confirmation shows the batch size and enabled services. Stop finishes the current request; submitted cloud review tasks can continue. An uncertain failed task submission may still have been billed—check the provider before retrying. Terminal failed/expired review tasks retain their IDs and surface errors rather than silently purchasing replacements.
+
+AI output separates observations, potential opportunities, discovery questions, limitations, and source URLs. It is not a needs assessment or a closure decision. Only supplied-page citations are accepted; assertions still require human review. Scraped content is untrusted input, and no tools are exposed to the model. Selected business facts/page excerpts are sent to the configured AI provider; confirm that the base URL is one you trust. HTTPS is required except for loopback HTTP endpoints.
+
+CSV and brief exports include enrichment evidence and the prospecting category. The CSV also retains the original **Maps-only qualification** for provenance. Stale records are retained to avoid duplicate rediscovery. Save outreach before changing selection; outreach editing is disabled during enrichment batches.
 
 ## Outreach and exports
 
@@ -114,10 +133,13 @@ MapLeads does **not** generate websites, create GitHub repositories, deploy to V
 | Lead library and source records | `~/Library/Application Support/MapLeads/leads.json` |
 | Apify API token | macOS Keychain; service `local.MapLeads`, account `apify` |
 | Pending run ID | macOS app preferences |
+| Enrichment checks, pending tasks, and AI suggestions | `~/Library/Application Support/MapLeads/enrichment.json` |
+| Enrichment credentials | macOS Keychain; service `local.MapLeads.enrichment` |
+| Enrichment options and selected model | macOS app preferences |
 
 Search criteria are sent to Apify, which processes the scrape and stores its cloud run/dataset. Local storage does not mean the scraping is offline or that Apify's copy has been deleted.
 
-The local library is not encrypted by the app. Use normal macOS account protections, FileVault, and backups appropriate for your outreach data. Back up `leads.json`; do not commit it or API tokens to Git.
+The local libraries are not encrypted by the app. Use normal macOS account protections, FileVault, and backups appropriate for your outreach data. Back up both `leads.json` and `enrichment.json`; do not commit them or API tokens to Git.
 
 Writes are atomic. If the existing library cannot be read, the app refuses to overwrite it. Preserve the damaged file, restore a backup, and relaunch. Removing it discards its saved records.
 
@@ -128,6 +150,11 @@ Sources/MapLeads/
   App.swift       SwiftUI workspace, search lifecycle, and outreach editor
   Core.swift      Parsing, qualification, local persistence, and CSV export
   Apify.swift     Native URLSession API client and Keychain token storage
+  Enrichment.swift    Provider orchestration, caching, category routing, and evidence storage
+  SettingsView.swift  Unified provider settings and enrichment detail views
+  Firecrawl.swift     Website discovery and page retrieval
+  ReviewProvider.swift DataForSEO newest-review tasks
+  LLMProvider.swift   Compatible model discovery and grounded opportunity analysis
 Package.swift     Swift executable package, macOS 14 minimum
 Info.plist        App bundle metadata
 build-app.sh      Release build, app bundling, and local ad-hoc signing
@@ -154,8 +181,13 @@ These behavioral checks used throwaway smoke programs; there is no checked-in au
 
 **Still requires account-level/manual verification:** successful paid search completion, Keychain save/read with a real credential, and a full UI click-through. Accessibility automation was unavailable during initial development, and screenshot inspection could not be completed. No paid scrape was started as part of that verification.
 
+Version 1.1 verification: release build and signature verification passed; the updated native app launched with a window. Controlled-transport smoke scenarios exercised model discovery, strong website matching, grounded AI response parsing and invalid-citation rejection, newest-review timestamps versus owner replies, stale routing and downstream skips, disabled-provider isolation, cache reuse, persistence, multiline CSV, and corrupt-library preservation. These were not paid provider calls. Live Firecrawl/DataForSEO/AI account access and full settings click-through still need to be exercised with your credentials; Accessibility automation is disabled on the development machine.
+
 ## References
 
 - [Actor documentation and current pricing](https://apify.com/kaix/google-maps-places-scraper)
 - [Apify: start an Actor run](https://docs.apify.com/api/v2/actors-runs-post)
 - [Apify: retrieve dataset items](https://docs.apify.com/api/v2/dataset-items-get)
+- [Firecrawl search](https://docs.firecrawl.dev/api-reference/endpoint/search)
+- [DataForSEO Google reviews tasks](https://docs.dataforseo.com/v3/business_data/google/reviews/task_post/)
+- [OpenRouter model discovery](https://openrouter.ai/docs/api/api-reference/models/list-all-models-and-their-properties)

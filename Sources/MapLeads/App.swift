@@ -70,6 +70,10 @@ final class SearchSession: ObservableObject {
 struct Workspace: View {
     @ObservedObject var store: LeadStore
     @StateObject private var session = SearchSession()
+    @StateObject private var enrichment = EnrichmentStore()
+    @State private var enrichmentTargets: [Lead] = []
+    @State private var confirmEnrichment = false
+    @State private var forceEnrichment = false
     @State private var selected: String?
     @State private var bucket = "All leads"
     @State private var search = ""
@@ -80,10 +84,10 @@ struct Workspace: View {
     @State private var phoneOnly = false
     @State private var stageFilter = "Any stage"
     @State private var operationalOnly = false
-    private let buckets = ["All leads", "Call candidates", "Needs verification", "Excluded", "Follow-ups"]
+    private let buckets = ["All leads", "Website opportunities", "Existing-site opportunities", "Needs verification", "Inactive / stale leads", "Excluded", "Follow-ups"]
     var filtered: [Lead] {
         store.leads.filter { lead in
-            let matchesBucket = bucket == "All leads" || lead.qualification == bucket || (bucket == "Follow-ups" && lead.followUp != nil && !["Do not contact", "Not interested"].contains(lead.stage))
+            let matchesBucket = bucket == "All leads" || enrichment.category(lead) == bucket || (bucket == "Follow-ups" && lead.followUp != nil && !["Do not contact", "Not interested"].contains(lead.stage))
             let websiteMatches = websiteFilter == "Any website" || (websiteFilter == "No website listed" && lead.websiteKnown && lead.website == nil) || (websiteFilter == "Website present" && lead.website != nil) || (websiteFilter == "Website unknown" && !lead.websiteKnown)
             return matchesBucket && websiteMatches && (!phoneOnly || lead.phone != nil) && (!operationalOnly || lead.businessStatus == "OPERATIONAL") && (stageFilter == "Any stage" || lead.stage == stageFilter) && (search.isEmpty || "\(lead.title) \(lead.address ?? "") \(lead.categories.joined(separator: " "))".localizedCaseInsensitiveContains(search))
         }.sorted { $0.score == $1.score ? $0.title < $1.title : $0.score > $1.score }
@@ -107,7 +111,7 @@ struct Workspace: View {
                     Toggle("Operational status", isOn: $operationalOnly)
                 }.font(.caption)
                 Text("\(store.leads.count) saved businesses").font(.caption).foregroundStyle(.secondary)
-                Button("Apify settings", systemImage: "key") { showSettings = true }
+                Button("Settings", systemImage: "gearshape") { showSettings = true }.disabled(enrichment.busy)
                 Text("Your lead library stays on this Mac. Searches run on Apify.").font(.caption).foregroundStyle(.secondary)
             }.padding().navigationSplitViewColumnWidth(230)
         } content: {
@@ -143,7 +147,7 @@ struct Workspace: View {
                         Text(lead.categories.first ?? "Category unavailable").font(.subheadline).foregroundStyle(.secondary)
                         Text(lead.address ?? "Address unavailable").font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         HStack {
-                            Text(lead.qualification).foregroundStyle(lead.qualification == "Call candidates" ? .green : .secondary)
+                            Text(enrichment.category(lead)).foregroundStyle(enrichment.category(lead) == "Website opportunities" ? .green : .secondary)
                             Spacer()
                             Text(lead.stage)
                         }.font(.caption)
@@ -155,13 +159,27 @@ struct Workspace: View {
                 }
                 HStack {
                     Button("Import JSON", systemImage: "square.and.arrow.down", action: importJSON)
-                    Button("Export CSV", systemImage: "square.and.arrow.up") { saveText(store.exportCSV(filtered), name: "MapLeads.csv", type: .commaSeparatedText) }.disabled(filtered.isEmpty)
+                    Button("Export CSV", systemImage: "square.and.arrow.up") { saveText(enrichment.exportCSV(filtered, store: store), name: "MapLeads.csv", type: .commaSeparatedText) }.disabled(filtered.isEmpty)
                     Spacer()
                 }.padding()
+                HStack {
+                    Button("Enrich filtered list") { enrichmentTargets = filtered; confirmEnrichment = true }
+                        .disabled(filtered.isEmpty || !enrichment.enabled || enrichment.busy)
+                    if enrichment.busy { ProgressView().controlSize(.small); Button("Stop") { enrichment.stop() } }
+                }.padding(.horizontal)
+                if !enrichment.status.isEmpty { Text(enrichment.status).font(.caption).textSelection(.enabled).padding() }
             }.navigationSplitViewColumnWidth(min: 350, ideal: 410)
         } detail: {
             if let lead = store.leads.first(where: { $0.id == selected }) {
-                LeadDetail(lead: lead, save: store.update, export: { text in saveText(text, name: "Business-brief.txt", type: .plainText) }).id(lead.id)
+                VStack(spacing: 0) {
+                    HStack {
+                        Text(enrichment.category(lead)).font(.caption.bold())
+                        Spacer()
+                        Button("Enrich this lead") { enrichmentTargets = [lead]; confirmEnrichment = true }
+                            .disabled(!enrichment.enabled || enrichment.busy)
+                    }.padding()
+                    LeadDetail(lead: lead, enrichment: enrichment, save: store.update, export: { text in saveText(text, name: "Business-brief.txt", type: .plainText) }).id(lead.id).disabled(enrichment.busy)
+                }
             } else {
                 ContentUnavailableView("Choose a business", systemImage: "person.text.rectangle", description: Text("Review evidence, plan a call, and track the next step."))
             }
@@ -169,27 +187,36 @@ struct Workspace: View {
         .searchable(text: $search, prompt: "Search saved businesses")
         .sheet(isPresented: $showSearch) { SearchForm(session: session, store: store) }
         .sheet(isPresented: $showSettings) {
-            VStack(alignment: .leading, spacing: 18) {
-                Text("Apify connection").font(.title2.bold())
-                Text("Your token is stored in macOS Keychain. Searches send your niche and location to Apify and incur charges on your account.")
-                SecureField("Apify API token", text: $session.token).textFieldStyle(.roundedBorder)
-                Link("Manage API tokens", destination: URL(string: "https://console.apify.com/settings/integrations")!)
-                HStack {
-                    Button("Save token") { session.saveToken() }
-                    Button("Remove token") { session.token = ""; session.saveToken() }
-                    Spacer()
-                    Button("Done") { showSettings = false }
-                }
-                Text("Local library: ~/Library/Application Support/MapLeads").font(.caption).foregroundStyle(.secondary)
-            }.padding(28).frame(width: 500)
+            ProviderSettingsView(session: session, enrichment: enrichment)
         }
-        .alert("Action needs attention", isPresented: Binding(get: { localError != nil || session.error != nil || store.error != nil }, set: { if !$0 { localError = nil; session.error = nil; store.error = nil } })) {
-            Button("OK") { localError = nil; session.error = nil; store.error = nil }
-        } message: { Text(localError ?? session.error ?? store.error ?? "") }
+        .sheet(isPresented: $confirmEnrichment) {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Enrich \(enrichmentTargets.count) businesses?").font(.title2.bold())
+                Text("Enabled providers: \([enrichment.options.reviewsEnabled ? "DataForSEO" : nil, enrichment.options.firecrawlEnabled ? "Firecrawl" : nil, enrichment.options.aiEnabled ? "AI provider" : nil].compactMap { $0 }.joined(separator: ", "))")
+                Text("This sends selected business facts and website excerpts to enabled providers and may incur charges. The Apify spending cap does not apply. Existing opt-outs and closed listings are skipped. Successful recent checks are reused.")
+                Toggle("Refresh cached checks (additional paid requests)", isOn: $forceEnrichment)
+                Text("Pending review tasks resume instead of being resubmitted. Stop finishes the current request; cloud tasks may continue.").font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Button("Cancel") { confirmEnrichment = false }
+                    Spacer()
+                    Button("Authorize enrichment") {
+                        confirmEnrichment = false
+                        let targets = enrichmentTargets
+                        let force = forceEnrichment
+                        Task { await enrichment.run(targets, force: force) }
+                    }.buttonStyle(.borderedProminent)
+                }
+            }.padding(26).frame(width: 550)
+        }
+        .alert("Action needs attention", isPresented: Binding(get: { localError != nil || session.error != nil || store.error != nil || enrichment.error != nil }, set: { if !$0 { localError = nil; session.error = nil; store.error = nil; enrichment.error = nil } })) {
+            Button("OK") { localError = nil; session.error = nil; store.error = nil; enrichment.error = nil }
+        } message: { Text(localError ?? session.error ?? store.error ?? enrichment.error ?? "") }
     }
     func icon(_ bucket: String) -> String {
         switch bucket {
-        case "Call candidates": return "phone"
+        case "Website opportunities": return "phone"
+        case "Existing-site opportunities": return "globe"
+        case "Inactive / stale leads": return "archivebox"
         case "Needs verification": return "questionmark.circle"
         case "Excluded": return "nosign"
         case "Follow-ups": return "calendar"
@@ -258,6 +285,7 @@ struct SearchForm: View {
 
 struct LeadDetail: View {
     let lead: Lead
+    @ObservedObject var enrichment: EnrichmentStore
     let save: (Lead) -> Void
     let export: (String) -> Void
     @State private var stage = "New"
@@ -274,7 +302,7 @@ struct LeadDetail: View {
                 Text(lead.title).font(.largeTitle.bold()).textSelection(.enabled)
                 Text(lead.categories.joined(separator: " · ")).foregroundStyle(.secondary)
                 HStack {
-                    Label(lead.qualification, systemImage: "checklist")
+                    Label(enrichment.category(lead), systemImage: "checklist")
                     Spacer()
                     Text("Score \(lead.score)").font(.headline).foregroundStyle(.blue)
                 }
@@ -294,7 +322,7 @@ struct LeadDetail: View {
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(6)
                 }
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Why this lead is here").font(.headline)
+                    Text("Original Maps evidence").font(.headline)
                     ForEach(lead.evidence, id: \.self) { Text("• \($0)").font(.callout) }
                     Text("Listing signals are not proof the business is still operating. Verify before investing in a preview.").font(.caption).foregroundStyle(.secondary)
                 }
@@ -304,6 +332,8 @@ struct LeadDetail: View {
                         ForEach(lead.opportunities, id: \.self) { Text("• \($0)").font(.callout) }
                     }
                 }
+                Divider()
+                EnrichmentDetailView(record: enrichment.records[lead.id], category: enrichment.category(lead))
                 Divider()
                 Text("Outreach & next step").font(.title3.bold())
                 Picker("Stage", selection: $stage) { ForEach(stages, id: \.self) { Text($0).tag($0) } }
@@ -353,7 +383,8 @@ struct LeadDetail: View {
         Listed website: \(lead.website ?? (lead.websiteKnown ? "None listed on Maps" : "Unknown"))
         Maps: \(lead.mapsURL ?? "Unknown")
         Hours: \(lead.hours.joined(separator: "; "))
-        Qualification: \(lead.qualification)
+        Qualification: \(enrichment.category(lead))
+        Enrichment: \(enrichment.summary(lead))
         Evidence:
         \(lead.evidence.joined(separator: "\n"))
         Potential offers:

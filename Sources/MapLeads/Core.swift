@@ -585,7 +585,7 @@ final class LeadStore: ObservableObject {
         let header = [
             "Title", "Categories", "Phone", "Website", "Website status", "Address",
             "Business status", "Rating", "Reviews", "Claimed", "Chain", "Hours",
-            "Qualification", "Score", "Evidence", "Opportunities", "Stage",
+            "Maps-only qualification", "Score", "Evidence", "Opportunities", "Stage",
             "Follow-up", "Meeting", "Notes", "Maps URL", "Fetched at",
         ].map(Self.csvField).joined(separator: ",")
 
