@@ -565,19 +565,32 @@ final class LeadStore: ObservableObject {
                 order.append(fresh.id)
             }
         }
-        leads = order.compactMap { byID[$0] }
-        persist()
+        _ = replaceAll(order.compactMap { byID[$0] })
     }
 
     /// Replaces a lead (or appends it) and persists.
     func update(_ lead: Lead) {
-        guard ensureWritable() else { return }
-        if let i = leads.firstIndex(where: { $0.id == lead.id }) {
-            leads[i] = lead
+        var replacement = leads
+        if let i = replacement.firstIndex(where: { $0.id == lead.id }) {
+            replacement[i] = lead
         } else {
-            leads.append(lead)
+            replacement.append(lead)
         }
-        persist()
+        _ = replaceAll(replacement)
+    }
+    @discardableResult func replaceAll(_ replacement: [Lead]) -> Bool {
+        guard ensureWritable() else { return false }
+        do {
+            guard Set(replacement.map(\.id)).count == replacement.count else {
+                throw NSError(domain: "MapLeads", code: 1, userInfo: [NSLocalizedDescriptionKey: "Duplicate lead IDs in replacement library"])
+            }
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            encoder.outputFormatting = [.sortedKeys]
+            try encoder.encode(replacement).write(to: fileURL, options: .atomic)
+            leads = replacement; error = nil
+            return true
+        } catch { self.error = error.localizedDescription; return false }
     }
 
     /// Formula-safe CSV for any selection of leads.
@@ -637,17 +650,6 @@ final class LeadStore: ObservableObject {
         return true
     }
 
-    private func persist() {
-        do {
-            let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
-            encoder.outputFormatting = [.sortedKeys]
-            try encoder.encode(leads).write(to: fileURL, options: .atomic)
-            error = nil
-        } catch {
-            self.error = "Leads could not be saved (\(error.localizedDescription)). Changes remain in memory only."
-        }
-    }
 
     /// Quotes when needed and neutralizes spreadsheet formula injection —
     /// including payloads hidden behind leading whitespace — by prefixing an

@@ -40,10 +40,10 @@ Original Maps-only qualification remains in CSV for provenance.
 Old reviews do not establish closure. No website found does not prove absence.
 
 OUTREACH
-Choose a lead, edit stage/notes/follow-up/meeting, then Save outreach BEFORE
-selecting another lead. Follow-ups shows scheduled follow-ups, not calendar
-notifications. Imports and refreshes preserve saved outreach for the same ID.
-Export brief includes the current detail editor's notes and scheduling fields.
+Choose a lead and use Save outcome, Save next step, Save corrections,
+Save handoff, or Save notes. Manual stage changes save immediately.
+Due today/Overdue queues use this Mac's timezone. Per-lead reminders are
+opt-in; meeting .ics export is explicit, not calendar synchronization.
 Website previews are not generated or deployed by this app.
 
 IMPORT / EXPORT
@@ -56,8 +56,8 @@ LOCAL DATA
 Library: ~/Library/Application Support/MapLeads/leads.json
 Token: macOS Keychain, service local.MapLeads, account apify
 Pending run: macOS app preferences
-Back up leads.json with your normal local backups. The library is not encrypted
-by this app; macOS permissions and FileVault provide system-level protection.
+Back up leads.json, enrichment.json and workflow.json, or export a full backup.
+Libraries are not app-encrypted; macOS permissions and FileVault provide protection.
 If the library is unreadable, the app refuses to overwrite it. Restore a backup
 and relaunch. Removing a damaged library loses its records; preserve a copy.
 
@@ -78,10 +78,29 @@ Stop finishes the current request; pending review tasks are saved and resume
 on the next enrichment pass without resubmission. Provider task failures stay
 visible rather than silently purchasing new tasks.
 Evidence, dates, pending tasks, and AI suggestions live in enrichment.json
-alongside leads.json. Back up both files. Enrichment keys use Keychain service
+alongside leads.json. Back up these plus workflow.json. Enrichment keys use Keychain service
 local.MapLeads.enrichment. Business facts and page text go to enabled providers.
 AI suggestions are hypotheses and discovery questions, never guaranteed needs.
 See README.md for complete provider behavior and verification limits.
+
+WORKFLOW TOOLS (1.2)
+Call queue uses the filtered eligible list; Save & next logs explicit outcomes,
+Skip does not. Callback/meeting outcomes require dates. Business local time
+appears only when a valid source timezone exists. Calls are not automated.
+Manual corrections, reasons, verified websites, archive state and preparation
+fields live separately from raw Maps facts and survive rescans.
+Insights & history includes search counts (new/refreshed), priority preferences,
+recorded-outcome funnel by niche/area/offer, enrichment jobs, and suppression.
+Costs not supplied by a provider show Not reported, not zero.
+Library tools supports full backup/restore, age-based archive and confirmed
+deletion of archived research. Safety backup precedes restore. Individual
+files write atomically; restore attempts rollback on error. Keep the backup.
+Opt-outs, contact history, tombstones and pending cloud tasks survive cleanup.
+Exact normalized phone suppression can cover duplicate listings; it does not
+guess country prefixes or match phone suffixes. Removal requires confirmation.
+Replacing a failed review task is a separate paid-operation checkbox; old task
+IDs remain in enrichment evidence. Pending tasks otherwise resume normally.
+Notification permissions/delivery and calendar import still need manual checks.
 
 VERIFICATION / LIMITATIONS
 Release build and native visible-window launch verified locally. Throwaway

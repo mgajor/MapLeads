@@ -59,6 +59,7 @@ struct EnrichmentRecord: Codable {
     var analysisBaseURL: String?
     var analysisError: String?
     var websiteIdentity: String?
+    var retiredReviewTaskIDs: [String]?
 }
 
 @MainActor
@@ -94,6 +95,13 @@ final class EnrichmentStore: ObservableObject {
         do { preferences.set(try JSONEncoder().encode(options), forKey: "enrichmentOptions") }
         catch { self.error = error.localizedDescription }
     }
+    @discardableResult func replaceRecords(_ replacement: [String: EnrichmentRecord]) -> Bool {
+        guard !broken, !busy else { error = "Enrichment storage unavailable or a batch is running."; return false }
+        do {
+            try JSONEncoder().encode(replacement).write(to: file, options: .atomic)
+            records = replacement; error = nil; return true
+        } catch { self.error = error.localizedDescription; return false }
+    }
     func category(_ lead: Lead, now: Date = Date()) -> String {
         if ["Do not contact", "Not interested"].contains(lead.stage) || lead.moved || lead.alert || ["CLOSED_PERMANENTLY", "CLOSED_TEMPORARILY"].contains(lead.businessStatus ?? "") || lead.phone == nil { return "Excluded" }
         let record = records[lead.id]
@@ -116,6 +124,7 @@ final class EnrichmentStore: ObservableObject {
         var lines: [String] = []
         if let review = record.review { lines.append("Review check \(review.checkedAt.formatted()): \(review.evidence)") }
         if let task = record.reviewTaskID { lines.append("Pending review task: \(task)") }
+        if let retired = record.retiredReviewTaskIDs, !retired.isEmpty { lines.append("Replaced review task IDs: \(retired.joined(separator: ", "))") }
         if let check = record.website { lines.append("Website \(check.status), \(check.checkedAt.formatted()): \(check.url ?? "none") · \(check.evidence.joined(separator: "; "))") }
         if let analysis = record.analysis {
             lines.append("AI model: \(analysis.model), \(analysis.checkedAt.formatted())")
@@ -155,7 +164,18 @@ final class EnrichmentStore: ObservableObject {
             return true
         } catch { self.error = "Could not save enrichment: \(error.localizedDescription)"; return false }
     }
-    func run(_ leads: [Lead], force: Bool = false) async {
+    @discardableResult func retireFailedReviewTasks(_ ids: [String]) -> Bool {
+        guard !busy else { return false }
+        var next = records
+        for id in ids {
+            guard var record = next[id], record.reviewError != nil, let task = record.reviewTaskID else { continue }
+            record.retiredReviewTaskIDs = (record.retiredReviewTaskIDs ?? []) + [task]
+            record.reviewTaskID = nil
+            next[id] = record
+        }
+        return replaceRecords(next)
+    }
+    func run(_ leads: [Lead], force: Bool = false, confirmedOperating: Set<String> = []) async {
         guard !busy, enabled, !broken else { return }
         let settings = options
         busy = true; stopped = false; error = nil
@@ -178,7 +198,7 @@ final class EnrichmentStore: ObservableObject {
                     record.website = nil; record.websiteError = nil; record.analysis = nil
                     record.websiteIdentity = identity
                 }
-                if settings.reviewsEnabled && (force || record.review == nil || record.reviewError != nil || !fresh(record.review!.checkedAt) || record.reviewTaskID != nil) {
+                if settings.reviewsEnabled && !confirmedOperating.contains(lead.id) && (force || record.review == nil || record.reviewError != nil || !fresh(record.review!.checkedAt) || record.reviewTaskID != nil) {
                     do {
                         let client = DataForSEOClient(login: login, password: password, session: network)
                         if record.reviewTaskID == nil {
@@ -202,7 +222,7 @@ final class EnrichmentStore: ObservableObject {
                     guard persist(record, id: lead.id) else { return }
                 }
                 if stopped { break }
-                if settings.reviewsEnabled && (record.reviewTaskID != nil || record.reviewError != nil || record.review?.latestReview == nil || category(lead) == "Inactive / stale leads") { continue }
+                if settings.reviewsEnabled && !confirmedOperating.contains(lead.id) && (record.reviewTaskID != nil || record.reviewError != nil || record.review?.latestReview == nil || category(lead) == "Inactive / stale leads") { continue }
                 if settings.firecrawlEnabled && (force || record.website == nil || record.websiteError != nil || !fresh(record.website!.checkedAt)) {
                     do {
                         record.website = try await FirecrawlClient(token: fireToken, session: network).check(lead)

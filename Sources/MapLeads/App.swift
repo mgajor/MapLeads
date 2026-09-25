@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 struct MapLeadsApp: App {
     @StateObject private var store = LeadStore()
     var body: some Scene {
-        WindowGroup {
+        Window("MapLeads", id: "workspace") {
             Workspace(store: store)
                 .frame(minWidth: 1050, minHeight: 700)
         }
@@ -28,7 +28,7 @@ final class SearchSession: ObservableObject {
         do { try KeychainToken.save(token.trimmingCharacters(in: .whitespacesAndNewlines)); message = "Credential updated in Keychain." }
         catch { self.error = error.localizedDescription }
     }
-    func search(query: String, location: String, radius: Double, limit: Int, mode: String, budget: Double, store: LeadStore) async {
+    func search(query: String, location: String, radius: Double, limit: Int, mode: String, budget: Double, store: LeadStore, workflow: WorkflowStore, enrichment: EnrichmentStore) async {
         busy = true
         defer { busy = false }
         do {
@@ -36,24 +36,40 @@ final class SearchSession: ObservableObject {
             let run = try await ApifyClient(token: token).start(query: query, location: location, radius: radius, maxResults: limit, mode: mode, budget: budget)
             runID = run.id
             UserDefaults.standard.set(runID, forKey: "pendingRun")
-            try await collect(store: store)
+            let history = SearchHistory(id: run.id, date: Date(), query: query, location: location, radius: radius, limit: limit, mode: mode, status: run.status)
+            guard workflow.saveSearch(history) else { self.error = workflow.error; return }
+            try await collect(store: store, workflow: workflow, enrichment: enrichment)
         } catch { self.error = error.localizedDescription; message = "Search interrupted. If a run ID is present, resume it rather than starting again. Check Apify Console before retrying an uncertain start." }
     }
-    func resume(store: LeadStore) async {
+    func resume(store: LeadStore, workflow: WorkflowStore, enrichment: EnrichmentStore) async {
         busy = true
         defer { busy = false }
-        do { try await collect(store: store) } catch { self.error = error.localizedDescription }
+        do { try await collect(store: store, workflow: workflow, enrichment: enrichment) } catch { self.error = error.localizedDescription }
     }
-    private func collect(store: LeadStore) async throws {
+    private func collect(store: LeadStore, workflow: WorkflowStore, enrichment: EnrichmentStore) async throws {
         let client = ApifyClient(token: token)
         while true {
             let run = try await client.getRun(runID)
             message = "\(run.status): \(run.statusMessage ?? run.id)"
             if run.terminal {
                 let leads = run.defaultDatasetId.isEmpty ? [] : try await client.results(run.defaultDatasetId)
+                let incomingIDs = Set(leads.map(\.id))
+                let existingIDs = Set(store.leads.map(\.id))
+                var history = workflow.data.searches.first { $0.id == run.id } ?? SearchHistory(id: run.id, date: Date(), query: "Unknown (resumed legacy run)", location: "Unknown", radius: 0, limit: 0, mode: "Unknown", status: run.status)
+                if !history.completed {
+                    history.returned = leads.count
+                    history.newCount = incomingIDs.subtracting(existingIDs).count
+                    history.refreshedCount = incomingIDs.intersection(existingIDs).count
+                    history.status = run.status
+                    history.qualifiedCount = leads.filter { ["Website opportunities", "Existing-site opportunities"].contains(workflow.category($0, enrichment: enrichment)) }.count
+                    guard workflow.saveSearch(history) else { self.error = workflow.error; return }
+                }
                 store.merge(leads)
                 guard store.error == nil else { return }
-                message = "\(run.status) · Saved \(leads.count) results.\(run.status == "SUCCEEDED" ? "" : " Results may be partial.")"
+                history.completed = true
+                history.actualCostUSD = run.usageTotalUsd
+                guard workflow.saveSearch(history) else { self.error = workflow.error; return }
+                message = "\(run.status) · \(history.newCount) new · \(history.refreshedCount) refreshed · \(history.returned) returned.\(run.status == "SUCCEEDED" ? "" : " Results may be partial.")"
                 runID = ""
                 UserDefaults.standard.removeObject(forKey: "pendingRun")
                 return
@@ -71,9 +87,14 @@ struct Workspace: View {
     @ObservedObject var store: LeadStore
     @StateObject private var session = SearchSession()
     @StateObject private var enrichment = EnrichmentStore()
+    @StateObject private var workflow = WorkflowStore()
+    @State private var showCallQueue = false
+    @State private var showInsights = false
+    @State private var showLibrary = false
     @State private var enrichmentTargets: [Lead] = []
     @State private var confirmEnrichment = false
     @State private var forceEnrichment = false
+    @State private var replaceFailedTasks = false
     @State private var selected: String?
     @State private var bucket = "All leads"
     @State private var search = ""
@@ -84,13 +105,24 @@ struct Workspace: View {
     @State private var phoneOnly = false
     @State private var stageFilter = "Any stage"
     @State private var operationalOnly = false
-    private let buckets = ["All leads", "Website opportunities", "Existing-site opportunities", "Needs verification", "Inactive / stale leads", "Excluded", "Follow-ups"]
+    private let buckets = ["All leads", "Website opportunities", "Existing-site opportunities", "Due today", "Overdue", "Needs verification", "Inactive / stale leads", "Excluded", "Follow-ups", "Archived"]
     var filtered: [Lead] {
         store.leads.filter { lead in
-            let matchesBucket = bucket == "All leads" || enrichment.category(lead) == bucket || (bucket == "Follow-ups" && lead.followUp != nil && !["Do not contact", "Not interested"].contains(lead.stage))
-            let websiteMatches = websiteFilter == "Any website" || (websiteFilter == "No website listed" && lead.websiteKnown && lead.website == nil) || (websiteFilter == "Website present" && lead.website != nil) || (websiteFilter == "Website unknown" && !lead.websiteKnown)
-            return matchesBucket && websiteMatches && (!phoneOnly || lead.phone != nil) && (!operationalOnly || lead.businessStatus == "OPERATIONAL") && (stageFilter == "Any stage" || lead.stage == stageFilter) && (search.isEmpty || "\(lead.title) \(lead.address ?? "") \(lead.categories.joined(separator: " "))".localizedCaseInsensitiveContains(search))
-        }.sorted { $0.score == $1.score ? $0.title < $1.title : $0.score > $1.score }
+            let category = workflow.category(lead, enrichment: enrichment)
+            let effective = workflow.effective(lead)
+            let eligibleCallback = !["Excluded", "Archived", "Inactive / stale leads"].contains(category)
+            let today = Calendar.current.startOfDay(for: Date())
+            let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: today)!
+            let dueToday = lead.followUp.map { $0 >= today && $0 < tomorrow } ?? false
+            let overdue = lead.followUp.map { $0 < today } ?? false
+            let matchesBucket = (bucket == "All leads" && category != "Archived") || category == bucket || (bucket == "Follow-ups" && lead.followUp != nil && eligibleCallback) || (bucket == "Due today" && dueToday && eligibleCallback) || (bucket == "Overdue" && overdue && eligibleCallback)
+            let websiteMatches = websiteFilter == "Any website" || (websiteFilter == "No website listed" && effective.websiteKnown && effective.website == nil) || (websiteFilter == "Website present" && effective.website != nil) || (websiteFilter == "Website unknown" && !effective.websiteKnown)
+            return matchesBucket && websiteMatches && (!phoneOnly || effective.phone != nil) && (!operationalOnly || effective.businessStatus == "OPERATIONAL") && (stageFilter == "Any stage" || lead.stage == stageFilter) && (search.isEmpty || "\(lead.title) \(lead.address ?? "") \(lead.categories.joined(separator: " "))".localizedCaseInsensitiveContains(search))
+        }.sorted {
+            if ["Due today", "Overdue", "Follow-ups"].contains(bucket), $0.followUp != $1.followUp { return ($0.followUp ?? .distantFuture) < ($1.followUp ?? .distantFuture) }
+            let a = workflow.priority($0).score, b = workflow.priority($1).score
+            return a == b ? ($0.score == $1.score ? $0.title < $1.title : $0.score > $1.score) : a > b
+        }
     }
     var body: some View {
         NavigationSplitView {
@@ -105,13 +137,16 @@ struct Workspace: View {
                         ForEach(["Any website", "No website listed", "Website present", "Website unknown"], id: \.self) { Text($0).tag($0) }
                     }.labelsHidden()
                     Picker("Stage", selection: $stageFilter) {
-                        ForEach(["Any stage", "New", "Contacted", "Interested", "Meeting booked", "Won", "Not interested", "Do not contact"], id: \.self) { Text($0).tag($0) }
+                        ForEach(["Any stage", "New", "Contacted", "Interested", "Meeting booked", "Meeting held", "Proposal sent", "Won", "Not interested", "Do not contact"], id: \.self) { Text($0).tag($0) }
                     }.labelsHidden()
                     Toggle("Has phone", isOn: $phoneOnly)
                     Toggle("Operational status", isOn: $operationalOnly)
                 }.font(.caption)
                 Text("\(store.leads.count) saved businesses").font(.caption).foregroundStyle(.secondary)
                 Button("Settings", systemImage: "gearshape") { showSettings = true }.disabled(enrichment.busy)
+                Button("Call queue", systemImage: "phone") { showCallQueue = true }.disabled(enrichment.busy || session.busy)
+                Button("Insights & history", systemImage: "chart.bar") { showInsights = true }.disabled(enrichment.busy || session.busy)
+                Button("Library tools", systemImage: "externaldrive") { showLibrary = true }.disabled(enrichment.busy || session.busy)
                 Text("Your lead library stays on this Mac. Searches run on Apify.").font(.caption).foregroundStyle(.secondary)
             }.padding().navigationSplitViewColumnWidth(230)
         } content: {
@@ -131,7 +166,7 @@ struct Workspace: View {
                         if !session.runID.isEmpty {
                             HStack {
                                 Link("Open run", destination: URL(string: "https://console.apify.com/actors/runs/\(session.runID)")!)
-                                Button("Resume / collect") { Task { await session.resume(store: store) } }.disabled(session.busy || session.token.isEmpty)
+                                Button("Resume / collect") { Task { await session.resume(store: store, workflow: workflow, enrichment: enrichment) } }.disabled(session.busy || session.token.isEmpty)
                                 Button("Abort cloud run") { Task { await session.abort() } }
                             }.font(.caption)
                         }
@@ -147,7 +182,7 @@ struct Workspace: View {
                         Text(lead.categories.first ?? "Category unavailable").font(.subheadline).foregroundStyle(.secondary)
                         Text(lead.address ?? "Address unavailable").font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         HStack {
-                            Text(enrichment.category(lead)).foregroundStyle(enrichment.category(lead) == "Website opportunities" ? .green : .secondary)
+                            Text(workflow.category(lead, enrichment: enrichment)).foregroundStyle(workflow.category(lead, enrichment: enrichment) == "Website opportunities" ? .green : .secondary)
                             Spacer()
                             Text(lead.stage)
                         }.font(.caption)
@@ -159,7 +194,7 @@ struct Workspace: View {
                 }
                 HStack {
                     Button("Import JSON", systemImage: "square.and.arrow.down", action: importJSON)
-                    Button("Export CSV", systemImage: "square.and.arrow.up") { saveText(enrichment.exportCSV(filtered, store: store), name: "MapLeads.csv", type: .commaSeparatedText) }.disabled(filtered.isEmpty)
+                    Button("Export CSV", systemImage: "square.and.arrow.up") { saveText(WorkflowExport.csv(leads: filtered, store: store, enrichment: enrichment, workflow: workflow), name: "MapLeads.csv", type: .commaSeparatedText) }.disabled(filtered.isEmpty)
                     Spacer()
                 }.padding()
                 HStack {
@@ -173,19 +208,28 @@ struct Workspace: View {
             if let lead = store.leads.first(where: { $0.id == selected }) {
                 VStack(spacing: 0) {
                     HStack {
-                        Text(enrichment.category(lead)).font(.caption.bold())
+                        Text(workflow.category(lead, enrichment: enrichment)).font(.caption.bold())
                         Spacer()
                         Button("Enrich this lead") { enrichmentTargets = [lead]; confirmEnrichment = true }
                             .disabled(!enrichment.enabled || enrichment.busy)
                     }.padding()
-                    LeadDetail(lead: lead, enrichment: enrichment, save: store.update, export: { text in saveText(text, name: "Business-brief.txt", type: .plainText) }).id(lead.id).disabled(enrichment.busy)
+                    LeadDetail(lead: lead, enrichment: enrichment, workflow: workflow, store: store).disabled(enrichment.busy)
                 }
             } else {
                 ContentUnavailableView("Choose a business", systemImage: "person.text.rectangle", description: Text("Review evidence, plan a call, and track the next step."))
             }
         }
         .searchable(text: $search, prompt: "Search saved businesses")
-        .sheet(isPresented: $showSearch) { SearchForm(session: session, store: store) }
+        .sheet(isPresented: $showSearch) { SearchForm(session: session, store: store, workflow: workflow, enrichment: enrichment) }
+        .sheet(isPresented: $showCallQueue) { CallQueueView(leads: filtered, workflow: workflow, store: store, enrichment: enrichment).frame(minWidth: 850, minHeight: 650) }
+        .sheet(isPresented: $showInsights) {
+            InsightsView(workflow: workflow, store: store, enrichment: enrichment, retry: { ids in
+                showInsights = false
+                enrichmentTargets = store.leads.filter { ids.contains($0.id) }
+                confirmEnrichment = true
+            }).frame(minWidth: 900, minHeight: 650)
+        }
+        .sheet(isPresented: $showLibrary) { LibraryToolsView(store: store, enrichment: enrichment, workflow: workflow) }
         .sheet(isPresented: $showSettings) {
             ProviderSettingsView(session: session, enrichment: enrichment)
         }
@@ -195,6 +239,8 @@ struct Workspace: View {
                 Text("Enabled providers: \([enrichment.options.reviewsEnabled ? "DataForSEO" : nil, enrichment.options.firecrawlEnabled ? "Firecrawl" : nil, enrichment.options.aiEnabled ? "AI provider" : nil].compactMap { $0 }.joined(separator: ", "))")
                 Text("This sends selected business facts and website excerpts to enabled providers and may incur charges. The Apify spending cap does not apply. Existing opt-outs and closed listings are skipped. Successful recent checks are reused.")
                 Toggle("Refresh cached checks (additional paid requests)", isOn: $forceEnrichment)
+                Toggle("Replace failed review tasks (may purchase new tasks)", isOn: $replaceFailedTasks)
+                Text("Use only after inspecting provider errors. Old task IDs are retained for audit; this does not cancel cloud work.").font(.caption).foregroundStyle(.secondary)
                 Text("Pending review tasks resume instead of being resubmitted. Stop finishes the current request; cloud tasks may continue.").font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button("Cancel") { confirmEnrichment = false }
@@ -203,14 +249,31 @@ struct Workspace: View {
                         confirmEnrichment = false
                         let targets = enrichmentTargets
                         let force = forceEnrichment
-                        Task { await enrichment.run(targets, force: force) }
+                        if replaceFailedTasks && !enrichment.retireFailedReviewTasks(targets.map(\.id)) { return }
+                        Task { await runEnrichment(targets, force: force) }
                     }.buttonStyle(.borderedProminent)
                 }
             }.padding(26).frame(width: 550)
         }
-        .alert("Action needs attention", isPresented: Binding(get: { localError != nil || session.error != nil || store.error != nil || enrichment.error != nil }, set: { if !$0 { localError = nil; session.error = nil; store.error = nil; enrichment.error = nil } })) {
-            Button("OK") { localError = nil; session.error = nil; store.error = nil; enrichment.error = nil }
-        } message: { Text(localError ?? session.error ?? store.error ?? enrichment.error ?? "") }
+        .alert("Action needs attention", isPresented: Binding(get: { localError != nil || session.error != nil || store.error != nil || enrichment.error != nil || workflow.error != nil }, set: { if !$0 { localError = nil; session.error = nil; store.error = nil; enrichment.error = nil; workflow.error = nil } })) {
+            Button("OK") { localError = nil; session.error = nil; store.error = nil; enrichment.error = nil; workflow.error = nil }
+        } message: { Text(localError ?? session.error ?? store.error ?? enrichment.error ?? workflow.error ?? "") }
+    }
+    func runEnrichment(_ targets: [Lead], force: Bool) async {
+        let allowed = targets.filter { !["Excluded", "Archived"].contains(workflow.category($0, enrichment: enrichment)) }
+        var job = EnrichmentJob(date: Date(), leadIDs: allowed.map(\.id), status: "Running", summary: "\(targets.count - allowed.count) excluded or archived records skipped. Costs not reported; provider billing applies.")
+        guard workflow.saveJob(job) else { localError = workflow.error; return }
+        let confirmed = Set(allowed.filter { workflow.profile(id: $0.id).operatingOverride == "Confirmed operating" }.map(\.id))
+        await enrichment.run(allowed.map(workflow.effective), force: force, confirmedOperating: confirmed)
+        let failed = allowed.filter {
+            guard let r = enrichment.records[$0.id] else { return false }
+            return r.reviewError != nil || r.websiteError != nil || r.analysisError != nil
+        }
+        let pending = allowed.filter { enrichment.records[$0.id]?.reviewTaskID != nil }
+        job.status = enrichment.error != nil ? "Failed" : (!failed.isEmpty ? "Needs attention" : (!pending.isEmpty ? "Pending" : "Completed"))
+        if enrichment.status.hasPrefix("Stopped") { job.status = "Stopped" }
+        job.summary = "\(allowed.count) selected · \(failed.count) with errors · \(pending.count) pending. \(enrichment.error ?? enrichment.status) Cost not reported."
+        _ = workflow.saveJob(job)
     }
     func icon(_ bucket: String) -> String {
         switch bucket {
@@ -241,6 +304,8 @@ struct Workspace: View {
 struct SearchForm: View {
     @ObservedObject var session: SearchSession
     @ObservedObject var store: LeadStore
+    @ObservedObject var workflow: WorkflowStore
+    @ObservedObject var enrichment: EnrichmentStore
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
     @State private var location = ""
@@ -275,7 +340,7 @@ struct SearchForm: View {
                 Spacer()
                 Button("Start search") {
                     dismiss()
-                    Task { await session.search(query: query.trimmingCharacters(in: .whitespacesAndNewlines), location: location.trimmingCharacters(in: .whitespacesAndNewlines), radius: radius, limit: limit, mode: mode, budget: budget, store: store) }
+                    Task { await session.search(query: query.trimmingCharacters(in: .whitespacesAndNewlines), location: location.trimmingCharacters(in: .whitespacesAndNewlines), radius: radius, limit: limit, mode: mode, budget: budget, store: store, workflow: workflow, enrichment: enrichment) }
                 }.buttonStyle(.borderedProminent)
                     .disabled(!consent || session.token.isEmpty || session.busy || !session.runID.isEmpty || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -286,26 +351,19 @@ struct SearchForm: View {
 struct LeadDetail: View {
     let lead: Lead
     @ObservedObject var enrichment: EnrichmentStore
-    let save: (Lead) -> Void
-    let export: (String) -> Void
-    @State private var stage = "New"
-    @State private var notes = ""
-    @State private var followUp = Date()
-    @State private var meeting = Date()
-    @State private var hasFollowUp = false
-    @State private var hasMeeting = false
-    @State private var saved = false
-    let stages = ["New", "Contacted", "Interested", "Meeting booked", "Won", "Not interested", "Do not contact"]
+    @ObservedObject var workflow: WorkflowStore
+    @ObservedObject var store: LeadStore
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 Text(lead.title).font(.largeTitle.bold()).textSelection(.enabled)
                 Text(lead.categories.joined(separator: " · ")).foregroundStyle(.secondary)
                 HStack {
-                    Label(enrichment.category(lead), systemImage: "checklist")
+                    Label(workflow.category(lead, enrichment: enrichment), systemImage: "checklist")
                     Spacer()
                     Text("Score \(lead.score)").font(.headline).foregroundStyle(.blue)
                 }
+                Text("Priority \(workflow.priority(lead).score): \(workflow.priority(lead).reasons.joined(separator: "; "))").font(.caption).foregroundStyle(.secondary)
                 GroupBox("Listing facts") {
                     VStack(alignment: .leading, spacing: 9) {
                         fact("Phone", lead.phone ?? "Not provided")
@@ -333,34 +391,11 @@ struct LeadDetail: View {
                     }
                 }
                 Divider()
-                EnrichmentDetailView(record: enrichment.records[lead.id], category: enrichment.category(lead))
+                EnrichmentDetailView(record: enrichment.records[lead.id], category: workflow.category(lead, enrichment: enrichment))
+                WorkflowLeadPanel(lead: lead, workflow: workflow, store: store)
                 Divider()
-                Text("Outreach & next step").font(.title3.bold())
-                Picker("Stage", selection: $stage) { ForEach(stages, id: \.self) { Text($0).tag($0) } }
-                Toggle("Schedule follow-up", isOn: $hasFollowUp)
-                if hasFollowUp { DatePicker("Follow-up", selection: $followUp) }
-                Toggle("Meeting booked", isOn: $hasMeeting)
-                if hasMeeting { DatePicker("Meeting", selection: $meeting) }
-                Text("Call notes").font(.headline)
-                TextEditor(text: $notes).font(.body).frame(minHeight: 120).padding(6).overlay(RoundedRectangle(cornerRadius: 6).stroke(.gray.opacity(0.3)))
-                HStack {
-                    Button("Save outreach") {
-                        var updated = lead
-                        updated.stage = stage; updated.notes = notes
-                        updated.followUp = hasFollowUp ? followUp : nil
-                        updated.meeting = hasMeeting ? meeting : nil
-                        save(updated); saved = true
-                    }.buttonStyle(.borderedProminent)
-                    if saved { Text("Save requested").font(.caption).foregroundStyle(.secondary) }
-                    Spacer()
-                    Button("Export brief") { export(brief) }
-                }
                 DisclosureGroup("Source JSON") { Text(lead.rawJSON).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
             }.padding(26)
-        }.onAppear {
-            stage = lead.stage; notes = lead.notes
-            hasFollowUp = lead.followUp != nil; followUp = lead.followUp ?? Date()
-            hasMeeting = lead.meeting != nil; meeting = lead.meeting ?? Date()
         }
     }
     func fact(_ name: String, _ value: String) -> some View {
@@ -372,34 +407,5 @@ struct LeadDetail: View {
     func safeURL(_ value: String?) -> URL? {
         guard let value, let url = URL(string: value), ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { return nil }
         return url
-    }
-    var brief: String {
-        """
-        BUSINESS PREVIEW BRIEF
-        \(lead.title)
-        Categories: \(lead.categories.joined(separator: ", "))
-        Phone: \(lead.phone ?? "Unknown")
-        Address: \(lead.address ?? "Unknown")
-        Listed website: \(lead.website ?? (lead.websiteKnown ? "None listed on Maps" : "Unknown"))
-        Maps: \(lead.mapsURL ?? "Unknown")
-        Hours: \(lead.hours.joined(separator: "; "))
-        Qualification: \(enrichment.category(lead))
-        Enrichment: \(enrichment.summary(lead))
-        Evidence:
-        \(lead.evidence.joined(separator: "\n"))
-        Potential offers:
-        \(lead.opportunities.joined(separator: "\n"))
-        Stage: \(stage)
-        Meeting: \(hasMeeting ? meeting.formatted() : "Not scheduled")
-        Follow-up: \(hasFollowUp ? followUp.formatted() : "Not scheduled")
-        Notes: \(notes)
-
-        PREVIEW CHECKLIST
-        Verify operating status and whether a separate website exists.
-        Use your existing niche template; label any placeholder content.
-        Confirm rights/permission for photos and logos; public availability is not a license.
-        Never invent testimonials, services, credentials, or business history.
-        Keep previews access-controlled. A Vercel URL and noindex alone are not private.
-        """
     }
 }

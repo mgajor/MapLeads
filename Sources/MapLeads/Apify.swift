@@ -115,6 +115,7 @@ struct ActorRun: Codable, Equatable {
     let status: String
     let defaultDatasetId: String
     let statusMessage: String?
+    var usageTotalUsd: Double? = nil
 
     /// True once the run can no longer change state.
     var terminal: Bool {
@@ -139,12 +140,14 @@ struct ActorRun: Codable, Equatable {
         status = try container.decode(String.self, forKey: .status)
         defaultDatasetId = try container.decodeIfPresent(String.self, forKey: .defaultDatasetId) ?? ""
         statusMessage = try container.decodeIfPresent(String.self, forKey: .statusMessage)
+        usageTotalUsd = try container.decodeIfPresent(Double.self, forKey: .usageTotalUsd)
     }
 
     static func == (lhs: ActorRun, rhs: ActorRun) -> Bool {
         lhs.id == rhs.id && lhs.status == rhs.status
             && lhs.defaultDatasetId == rhs.defaultDatasetId
             && lhs.statusMessage == rhs.statusMessage
+            && lhs.usageTotalUsd == rhs.usageTotalUsd
     }
 }
 

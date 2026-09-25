@@ -116,9 +116,24 @@ CSV and brief exports include enrichment evidence and the prospecting category. 
 
 ## Outreach and exports
 
-Select a business, edit its stage, notes, meeting date, or follow-up date, then click **Save outreach before selecting another business**.
+Select a business and use the dedicated **Save outcome**, **Save next step**, **Save corrections**, **Save handoff**, and **Save notes** actions. Manual stage changes save immediately. Save edits before changing selection; a switched draft can be copied to the clipboard. The original listing facts remain separate from manual corrections.
 
-The follow-up queue lists scheduled follow-ups; it does not send notifications or create calendar events.
+**Due today**, **Overdue**, and **Follow-ups** organize callbacks using this Mac's timezone. Optional per-lead macOS notifications require permission requested only when you enable them. Export a meeting as `.ics` to add it to your calendar; this is explicit export, not automatic calendar synchronization. Business local time is shown only when the source includes a valid timezone.
+
+## Calling workflow and operations (1.2)
+
+- **Call queue:** opens the currently filtered eligible prospects, one at a time. Record an explicit outcome and advance; Skip does not log a call. Callback and meeting outcomes require dates. No-answer/voicemail do not imply a conversation. Suppression and eligibility are rechecked against current records. Calls themselves are not automated.
+- **Manual corrections:** verified website, confirmed operating/closed, wrong number, not a fit, reason/date, and archive state survive listing refreshes. Confirmed operating bypasses stale-review screening, but does not override a separate hard closure/move/alert exclusion. Phone suppression remains authoritative. Source conflicts are visible.
+- **Insights & history → Priorities:** choose preferred niches, areas, templates, independence, review/rating ranges, and offer. Additive reasons explain ranking; preferences never make an excluded lead eligible.
+- **Preview handoff:** save the offer, template, promised deliverables, available/missing assets, open questions, repository/preview links, and preparation status. Export a brief or meeting `.ics`. No repositories or deployments are created automatically; private-preview status is your declaration, not a security check.
+- **Search history:** new searches retain parameters, run links, returned/new/refreshed counts, qualification counts at collection time, and Apify-reported `usageTotalUsd` when available. No history is fabricated for pre-upgrade scans. Costs absent from responses read **Not reported**, never zero. Qualification counts can change later as enrichment arrives.
+- **Funnel:** counts distinct leads with explicit recorded outcomes, grouped/filterable by niche, area, and offer captured when the event happened. Stages are independent, not cumulative. It does not infer a conversation from an attempt or infer a sale from a meeting. Current library stock is displayed separately.
+- **Enrichment jobs:** retain selected IDs, status and summaries. Resume/retry returns through normal paid-run confirmation and caching. A separate **Replace failed review tasks** checkbox explicitly permits a replacement purchase while retaining retired task IDs. No shared enrichment cost cap or fabricated total is shown.
+- **Library tools:** export a full JSON backup (no keys); restore with confirmation after a safety backup is created in Application Support. Existing opt-outs and pending review tasks are retained. Restore uses atomic individual file writes with attempted rollback on failure, not a cross-file database transaction; keep the safety backup. It cancels pending local reminders and starts no cloud work.
+- **Retention:** archive old fetched records, or explicitly delete archived research. Contact history, suppression, correction/archive tombstones and pending cloud task IDs remain. Future scans can rediscover those IDs but do not automatically unarchive them. Deleting local records does not cancel cloud tasks or delete providers' copies.
+- **Suppression:** exact normalized digits match across listings; no unsafe last-seven/last-ten-digit matching. `+1` and an unqualified ten-digit number can remain different keys. Removing a suppression requires confirmation, and does not itself reset a lead's do-not-contact stage. Historical opt-outs are retained on restore.
+
+Use **Library tools → Export full backup** before major cleanup. Notifications are subject to macOS permissions/Focus; reminder scheduling and calendar export do not guarantee delivery or attendance. Follow applicable calling/messaging rules in your target jurisdictions.
 
 - **Import JSON:** accepts an Apify dataset JSON array, not CSV or a run-response envelope. Malformed records produce an error instead of a silent partial import.
 - **Export CSV:** exports the current filtered list and neutralizes formula-like spreadsheet values.
@@ -136,10 +151,11 @@ MapLeads does **not** generate websites, create GitHub repositories, deploy to V
 | Enrichment checks, pending tasks, and AI suggestions | `~/Library/Application Support/MapLeads/enrichment.json` |
 | Enrichment credentials | macOS Keychain; service `local.MapLeads.enrichment` |
 | Enrichment options and selected model | macOS app preferences |
+| Corrections, contact history, searches, jobs, priorities, suppression | `~/Library/Application Support/MapLeads/workflow.json` |
 
 Search criteria are sent to Apify, which processes the scrape and stores its cloud run/dataset. Local storage does not mean the scraping is offline or that Apify's copy has been deleted.
 
-The local libraries are not encrypted by the app. Use normal macOS account protections, FileVault, and backups appropriate for your outreach data. Back up both `leads.json` and `enrichment.json`; do not commit them or API tokens to Git.
+The local libraries are not encrypted by the app. Use normal macOS account protections, FileVault, and backups appropriate for your outreach data. Back up `leads.json`, `enrichment.json`, and `workflow.json`, or use the full-backup action; do not commit them or API tokens to Git.
 
 Writes are atomic. If the existing library cannot be read, the app refuses to overwrite it. Preserve the damaged file, restore a backup, and relaunch. Removing it discards its saved records.
 
@@ -155,6 +171,11 @@ Sources/MapLeads/
   Firecrawl.swift     Website discovery and page retrieval
   ReviewProvider.swift DataForSEO newest-review tasks
   LLMProvider.swift   Compatible model discovery and grounded opportunity analysis
+  Workflow.swift     Durable corrections, history, suppression, and priority rules
+  WorkflowViews.swift Call queue, handoff, reminders, and calendar export
+  InsightsView.swift Search/job history, priorities, funnel, and suppression UI
+  LibraryTools.swift Backup/restore and retention controls
+  WorkflowExport.swift Combined provenance and workflow CSV
 Package.swift     Swift executable package, macOS 14 minimum
 Info.plist        App bundle metadata
 build-app.sh      Release build, app bundling, and local ad-hoc signing
@@ -182,6 +203,8 @@ These behavioral checks used throwaway smoke programs; there is no checked-in au
 **Still requires account-level/manual verification:** successful paid search completion, Keychain save/read with a real credential, and a full UI click-through. Accessibility automation was unavailable during initial development, and screenshot inspection could not be completed. No paid scrape was started as part of that verification.
 
 Version 1.1 verification: release build and signature verification passed; the updated native app launched with a window. Controlled-transport smoke scenarios exercised model discovery, strong website matching, grounded AI response parsing and invalid-citation rejection, newest-review timestamps versus owner replies, stale routing and downstream skips, disabled-provider isolation, cache reuse, persistence, multiline CSV, and corrupt-library preservation. These were not paid provider calls. Live Firecrawl/DataForSEO/AI account access and full settings click-through still need to be exercised with your credentials; Accessibility automation is disabled on the development machine.
+
+Version 1.2 verification: release build/signature and native-window launch passed. Bundled smoke scenarios exercised correction overlays without raw mutation, refresh persistence, contact-event persistence, older-backup opt-out preservation, normalized-phone suppression across listing IDs, search upsert idempotence, archive/delete retention, priority explanations, explicit funnel mapping, blocked suppressed calls, and `.ics` UTC/escaping/CRLF folding. No live calls or paid provider runs were made. Full click-through, notification permission/delivery, and importing the `.ics` into a calendar still require manual verification; Accessibility automation remains disabled.
 
 ## References
 
